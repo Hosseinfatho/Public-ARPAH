@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CAIDF Visualization System</title>
+  <link rel="stylesheet" href="styles.css?v=12">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Welcome Page (default) -->
+    <div id="welcome-page" class="testing-page">
+      <div class="testing-page-content">
+        <h1>Clinician Testing Session</h1>
+
+        <p>
+          Thank you for participating. This session takes about <strong>10 minutes</strong> and focuses on
+          how clearly the dashboard supports your clinical review and discharge-readiness interpretation.
+        </p>
+
+        <h2>What to Do</h2>
+        <ul>
+          <li>Select a patient and review the timeline, summary, and evidence panels.</li>
+          <li>Think aloud: share what you are looking for, what you expect, and what is unclear.</li>
+          <li>Complete the assigned tasks as you normally would in practice.</li>
+        </ul>
+
+        <h2>Notes</h2>
+        <ul>
+          <li>We are testing the interface, not your performance.</li>
+          <li>There are no right or wrong answers.</li>
+          <li>If something is confusing, please mention it.</li>
+        </ul>
+
+        <p class="testing-note">
+          Your feedback will be used to improve clinical usability and workflow fit.
+        </p>
+
+        <div class="patient-selection">
+          <h2>Select a Patient to View</h2>
+          <div class="patient-buttons">
+            <button 
+              class="patient-button patient-button-1"
+              data-patient="1"
+            >
+              <div class="patient-button-content">
+                <span class="patient-button-icon">👤 Patient 1</span>
+              </div>
+            </button>
+            <button 
+              class="patient-button patient-button-2"
+              data-patient="2"
+            >
+              <div class="patient-button-content">
+                <span class="patient-button-icon">👤 Patient 2</span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Patient Dashboard Page -->
+    <div id="patient-page" class="patient-page" style="display: none;">
+      <nav class="nav-bar">
+        <h2 class="nav-title" id="nav-title">
+          Patient <span id="patient-number-display">1</span>
+        </h2>
+        <div class="nav-actions">
+          <span class="nav-action-item" id="back-to-welcome-btn" style="cursor: pointer;">
+            ← Back
+          </span>
+        </div>
+      </nav>
+
+      <!-- New Layout: Left Sidebar + Main Content Area -->
+      <div class="dashboard-layout">
+        <!-- Left Sidebar -->
+        <aside class="dashboard-sidebar">
+          <!-- Patient Information -->
+          <section class="sidebar-section" id="patient-info-section">
+            <h3 class="sidebar-section-title">Patient Information</h3>
+            <div id="patient-info-container" class="patient-info-container"></div>
+          </section>
+          
+          <!-- Episode Summary -->
+          <section class="sidebar-section" id="episode-summary-section">
+            <h3 class="sidebar-section-title">Episode Summary</h3>
+            <div id="episode-summary-container" class="episode-summary-container"></div>
+          </section>
+          
+          <!-- Filters -->
+          <section class="sidebar-section" id="filters-section">
+            <h3 class="sidebar-section-title">Filters</h3>
+            <div id="filters-container" class="filters-container"></div>
+          </section>
+        </aside>
+        
+        <!-- Main Content Area -->
+        <main class="dashboard-main">
+          <!-- Top: Parallel Clinical Event Timeline -->
+          <section class="main-section timeline-section" style="position: relative;">
+            <h3 class="section-title">Parallel Clinical Event Timeline<span id="clinical-timeline-total-count" class="clinical-timeline-total-count" aria-live="polite"></span></h3>
+            <select id="timeline-mode-select" class="timeline-mode-select" onchange="changeTimelineMode()" style="position: absolute; top: 14px; right: 18px;">
+              <option value="pointillism">Pointillism (Ribbons)</option>
+              <option value="storyline">Storyline (Lanes)</option>
+              <option value="patient_progress_timeline">Patient Progress Timeline</option>
+            </select>
+            <div id="clinical-timeline-container" class="clinical-timeline-container"></div>
+          </section>
+          
+          <!-- Bottom: Two columns -->
+          <div class="bottom-panels">
+            <!-- Bottom Left: Clinical Evidence Summary Matrix -->
+            <section class="main-section matrix-section" style="position: relative;">
+              <h3 class="section-title">Clinical Evidence Summary</h3>
+              <select id="matrix-mode-select" class="matrix-mode-select" onchange="changeMatrixMode()">
+                <option value="scorecard">Progress Score Card</option>
+                <option value="all_patient_summary" selected>All Patient Summary</option>
+                <option value="checklist">Clinical Checklist</option>
+                <option value="sparklines">Trend Sparklines</option>
+                <option value="heatmap">Team Activity Heatmap</option>
+              </select>
+              <div id="readiness-matrix-container" class="readiness-matrix-container"></div>
+            </section>
+            
+            <!-- Bottom Right: Daily Clinical Evidence Trend -->
+            <section class="main-section trend-section">
+                <h3 class="section-title" id="trend-section-title">Questions</h3>
+                <div class="trend-controls">
+                  <select id="trend-view-select" class="trend-view-select" onchange="changeTrendView()">
+                    <!-- <option value="daily">Daily Clinical Evidence Trend</option> -->
+                    <option value="questions" selected>Questions</option>
+                  </select>
+                </div>
+                <div id="evidence-trend-container" class="evidence-trend-container" style="display:none;"></div>
+                <div id="questions-container" class="questions-container" style="display:block;padding:10px;color:var(--text-muted);">Questions view placeholder</div>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js?v=69"></script>
+  <script>
+    // Chrome compatibility: Use event listeners instead of inline onclick
+    // This is more reliable across browsers
+    document.addEventListener('DOMContentLoaded', function() {
+      console.log('Setting up event listeners for Chrome compatibility...');
+      
+      // Patient buttons
+      const patientButtons = document.querySelectorAll('.patient-button[data-patient]');
+      patientButtons.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          const patientNum = parseInt(this.getAttribute('data-patient'));
+          console.log('Patient button clicked:', patientNum);
+          if (typeof window.handleSelectPatient === 'function') {
+            window.handleSelectPatient(patientNum);
+          } else if (typeof handleSelectPatient === 'function') {
+            handleSelectPatient(patientNum);
+          } else {
+            console.error('handleSelectPatient not available');
+            alert('Error: Functions not loaded. Please refresh the page.');
+          }
+        });
+      });
+      
+      // Back button
+      const backBtn = document.getElementById('back-to-welcome-btn');
+      if (backBtn) {
+        backBtn.addEventListener('click', function() {
+          console.log('Back button clicked');
+          if (typeof window.handleBackToWelcome === 'function') {
+            window.handleBackToWelcome();
+          } else if (typeof handleBackToWelcome === 'function') {
+            handleBackToWelcome();
+          } else {
+            console.error('handleBackToWelcome not available');
+          }
+        });
+      }
+      
+      console.log('Event listeners set up successfully');
+    });
+  </script>
+</body>
+</html>
+

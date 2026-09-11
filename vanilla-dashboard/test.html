@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Quick Test</title>
+</head>
+<body>
+  <h1>Test Page</h1>
+  <button onclick="testFunction()">Test Button</button>
+  <div id="result"></div>
+  
+  <script>
+    function testFunction() {
+      console.log('Test button clicked!');
+      document.getElementById('result').textContent = 'Button works!';
+    }
+    
+    // Test if script.js functions are available
+    window.addEventListener('load', () => {
+      console.log('Page loaded');
+      console.log('handleSelectPatient:', typeof window.handleSelectPatient);
+      console.log('showDashboard:', typeof showDashboard);
+    });
+  </script>
+  
+  <script src="script.js"></script>
+</body>
+</html>
+
+
+

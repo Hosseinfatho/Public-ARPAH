@@ -470,6 +470,11 @@ button {
 .discipline-tag.ot { background: #E78AC3; }
 .discipline-tag.slp { background: #A6D854; }
 .discipline-tag.sw { background: #FFD92F; }
+.discipline-tag.empty {
+  background: #f3f4f6;
+  color: var(--text-muted);
+  border-color: #e5e7eb;
+}
 
 /* Filters Section */
 .filters-container {

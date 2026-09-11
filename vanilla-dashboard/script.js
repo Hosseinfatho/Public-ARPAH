@@ -2061,6 +2061,46 @@ function getPatientStayDates() {
   return { admit, discharge };
 }
 
+/** Equal-width phase columns used when admit/discharge dates are not loaded yet. */
+function buildPlaceholderPhaseLayout(chartWidth) {
+  const n = TIMELINE_PHASES.length || 1;
+  const colW = chartWidth / n;
+  const phases = TIMELINE_PHASES.map((phase, i) => ({
+    phase,
+    days: 1,
+    x0: i * colW,
+    x1: (i + 1) * colW,
+    width: colW
+  }));
+  const days = phases.map((p) => ({
+    date: null,
+    key: '',
+    phase: p.phase,
+    x0: p.x0,
+    width: p.width,
+    x1: p.x1,
+    centerX: p.x0 + p.width / 2
+  }));
+  return {
+    days,
+    phases,
+    dateToDaySlot: () => ({ x0: 0, x1: chartWidth, width: chartWidth, centerX: chartWidth / 2 }),
+    dateToX: () => chartWidth / 2,
+    totalDays: n,
+    chartWidth,
+    isPlaceholder: true
+  };
+}
+
+function resolveTimelineDayLayout(chartWidth) {
+  const { admit, discharge } = getPatientStayDates();
+  if (admit && discharge) {
+    const layout = buildEqualDayLayout(admit, discharge, chartWidth);
+    if (layout) return { admit, discharge, dayLayout: layout };
+  }
+  return { admit: null, discharge: null, dayLayout: buildPlaceholderPhaseLayout(chartWidth) };
+}
+
 /** Move event into the column that matches its report/note date(s). */
 function realignEventPhaseFromNotes(event, admission, discharge) {
   const notes = event.origin_notes || [];
@@ -2254,100 +2294,157 @@ async function generateClinicalEventsData(patientNum, rawText) {
   };
 }
 
+function createEmptyPatientData() {
+  return {
+    basic: {
+      name: '',
+      age: '',
+      gender: '',
+      ageGender: '',
+      admitDate: '',
+      dischargeDate: '',
+      disposition: '',
+      diagnosis: '',
+      disciplinesInvolved: ''
+    },
+    readiness: [],
+    riskTrend: [],
+    timeline: [],
+    timelineSections: [],
+    logistics: [],
+    rawText: ''
+  };
+}
+
+function formatSidebarValue(value) {
+  const text = (value == null ? '' : String(value)).trim();
+  return text || '—';
+}
+
+function renderAllDashboardComponents() {
+  renderPatientInfoSidebar();
+  renderEpisodeSummary();
+  renderFilters();
+  renderClinicalTimeline();
+  renderReadinessMatrix();
+  renderQuestionsPanel();
+}
+
+function scheduleDashboardRender() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      renderAllDashboardComponents();
+      console.log('All dashboard components rendered');
+    });
+  });
+}
+
+let dashboardResizeListenerBound = false;
+function bindDashboardResizeListener() {
+  if (dashboardResizeListenerBound) return;
+  dashboardResizeListenerBound = true;
+  window.addEventListener('resize', function() {
+    if (!currentPatient) return;
+    clearTimeout(window.resizeTimeout);
+    window.resizeTimeout = setTimeout(() => {
+      console.log('Window resized, re-rendering...');
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          renderClinicalTimeline();
+          renderReadinessMatrix();
+        });
+      });
+    }, 250);
+  });
+}
+
+function openEmptyDashboard(patientNum) {
+  currentPatient = patientNum;
+  currentMatrixMode = 'all_patient_summary';
+  currentTimelineMode = 'pointillism';
+  currentFilters = {
+    phase: 'all',
+    discipline: 'all',
+    categories: { problem: true, treatment: true, test: true, occurrence: true },
+    collaborationOnly: false
+  };
+  patientData = createEmptyPatientData();
+  clinicalEventsData = { events: [], admission: null, discharge: null };
+  questionData = null;
+
+  const welcomePage = document.getElementById('welcome-page');
+  const patientPage = document.getElementById('patient-page');
+  if (!welcomePage || !patientPage) {
+    console.error('Required page elements not found');
+    alert('Error: Page structure not found');
+    return false;
+  }
+
+  welcomePage.style.display = 'none';
+  patientPage.style.display = 'block';
+
+  const patientNumberDisplay = document.getElementById('patient-number-display');
+  if (patientNumberDisplay) {
+    patientNumberDisplay.textContent = patientNum;
+  }
+
+  const matrixModeSelect = document.getElementById('matrix-mode-select');
+  if (matrixModeSelect) {
+    matrixModeSelect.value = currentMatrixMode;
+  }
+
+  const timelineModeSelect = document.getElementById('timeline-mode-select');
+  if (timelineModeSelect) {
+    timelineModeSelect.value = currentTimelineMode;
+  }
+
+  document.title = 'Patient ' + patientNum;
+  bindDashboardResizeListener();
+  scheduleDashboardRender();
+  return true;
+}
+
 async function showDashboard(patientNum) {
   console.log('showDashboard called with patient:', patientNum);
-  
+
   try {
-    currentPatient = patientNum;
-    currentMatrixMode = 'all_patient_summary';
-    
-    // Show loading state
-    const welcomePage = document.getElementById('welcome-page');
-    const patientPage = document.getElementById('patient-page');
-    
-    if (!welcomePage || !patientPage) {
-      console.error('Required page elements not found');
-      alert('Error: Page structure not found');
-      return;
-    }
-    
+    if (!openEmptyDashboard(patientNum)) return;
+
     console.log('Loading patient data...');
-    patientData = await loadPatientData(patientNum);
-    
-    if (!patientData) {
-      console.error('Failed to load patient data');
-      alert('Error loading patient data. Please check the console for details.');
-      return;
+    const loadedPatientData = await loadPatientData(patientNum);
+    if (currentPatient !== patientNum) return;
+
+    if (loadedPatientData) {
+      patientData = loadedPatientData;
+      console.log('Patient data loaded successfully:', patientData);
+    } else {
+      console.warn('Patient data file could not be loaded; keeping empty dashboard.');
     }
-    
-    // Generate clinical events data from Patient text (same logic as pointlism_doc.py)
-    console.log('Generating clinical events from patient data...');
+
     try {
-      clinicalEventsData = await generateClinicalEventsData(patientNum, patientData.rawText);
+      clinicalEventsData = await generateClinicalEventsData(
+        patientNum,
+        patientData?.rawText || ''
+      );
+      if (currentPatient !== patientNum) return;
       console.log('Clinical events generated:', clinicalEventsData.events?.length || 0, 'events');
     } catch (e) {
       console.warn('Could not generate clinical events:', e);
-      clinicalEventsData = { events: [] };
+      if (currentPatient !== patientNum) return;
+      clinicalEventsData = { events: [], admission: null, discharge: null };
     }
-    
-    console.log('Patient data loaded successfully:', patientData);
 
-    // Load question data for the Questions view
     try {
       questionData = await loadQuestionData();
+      if (currentPatient !== patientNum) return;
       console.log('Question data loaded successfully:', questionData);
     } catch (error) {
       console.warn('Question data could not be loaded:', error);
+      if (currentPatient !== patientNum) return;
       questionData = null;
     }
-    
-    // Hide welcome page and show dashboard
-    welcomePage.style.display = 'none';
-    patientPage.style.display = 'block';
-    
-    // Update patient number display
-    const patientNumberDisplay = document.getElementById('patient-number-display');
-    if (patientNumberDisplay) {
-      patientNumberDisplay.textContent = patientNum;
-    }
 
-    const matrixModeSelect = document.getElementById('matrix-mode-select');
-    if (matrixModeSelect) {
-      matrixModeSelect.value = currentMatrixMode;
-    }
-
-    document.title = 'Patient ' + patientNum;
-    
-    // Render all NEW components - use requestAnimationFrame to ensure containers are sized
-    console.log('Rendering new dashboard components...');
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        renderPatientInfoSidebar();
-        renderEpisodeSummary();
-        renderFilters();
-        renderClinicalTimeline();
-        renderReadinessMatrix();
-        renderQuestionsPanel();
-        console.log('All new components rendered');
-      });
-    });
-    
-    // Add window resize handler
-    window.addEventListener('resize', function() {
-      if (currentPatient) {
-        clearTimeout(window.resizeTimeout);
-        window.resizeTimeout = setTimeout(() => {
-          console.log('Window resized, re-rendering...');
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              renderClinicalTimeline();
-              renderReadinessMatrix();
-            });
-          });
-        }, 250);
-      }
-    });
-    
+    scheduleDashboardRender();
   } catch (error) {
     console.error('Error in showDashboard:', error);
     alert('Error loading dashboard: ' + error.message);
@@ -3393,35 +3490,36 @@ function renderRadarChart() {
 // Render Patient Info in Sidebar
 function renderPatientInfoSidebar() {
   const container = document.getElementById('patient-info-container');
-  if (!container || !patientData) return;
-  
-  const data = patientData.basic;
-  const uic = data.name ? data.name.match(/\d+/) : ['1070'];
-  
+  if (!container) return;
+
+  const data = patientData?.basic || {};
+  const uicMatch = data.name ? data.name.match(/\d+/) : null;
+  const displayName = uicMatch ? uicMatch[0] : data.name;
+
   container.innerHTML = `
     <div class="patient-info-row">
       <span class="patient-info-label">Name:</span>
-      <span class="patient-info-value">${uic ? uic[0] : '1070'}</span>
+      <span class="patient-info-value">${formatSidebarValue(displayName)}</span>
     </div>
     <div class="patient-info-row">
       <span class="patient-info-label">Age:</span>
-      <span class="patient-info-value">${data.age || '72 Years Old'}</span>
+      <span class="patient-info-value">${formatSidebarValue(data.age)}</span>
     </div>
     <div class="patient-info-row">
       <span class="patient-info-label">Gender:</span>
-      <span class="patient-info-value">${data.gender || 'Male'}</span>
+      <span class="patient-info-value">${formatSidebarValue(data.gender)}</span>
     </div>
     <div class="patient-info-row">
       <span class="patient-info-label">Admit Date:</span>
-      <span class="patient-info-value">${data.admitDate || '1/10'}</span>
+      <span class="patient-info-value">${formatSidebarValue(data.admitDate)}</span>
     </div>
     <div class="patient-info-row">
       <span class="patient-info-label">Discharge Date:</span>
-      <span class="patient-info-value">${data.dischargeDate || ''}</span>
+      <span class="patient-info-value">${formatSidebarValue(data.dischargeDate)}</span>
     </div>
     <div class="patient-info-row">
       <span class="patient-info-label">Diagnosis:</span>
-      <span class="patient-info-value">${data.diagnosis || 'Orthopedics, Phys infer to mechanical fall'}</span>
+      <span class="patient-info-value">${formatSidebarValue(data.diagnosis)}</span>
     </div>
   `;
 }
@@ -3462,24 +3560,29 @@ function renderEpisodeSummary() {
     });
   });
   
-  // Calculate inpatient period
-  const admitDate = patientData?.basic?.admitDate || '1/10';
-  const dischargeDate = patientData?.basic?.dischargeDate || '1/21';
-  
+  const admitDate = formatSidebarValue(patientData?.basic?.admitDate);
+  const dischargeDate = formatSidebarValue(patientData?.basic?.dischargeDate);
+  const hasStayDates = Boolean((patientData?.basic?.admitDate || '').trim() || (patientData?.basic?.dischargeDate || '').trim());
+  const periodText = hasStayDates ? `${admitDate} - ${dischargeDate}` : '—';
+  const activePhaseText = events.length ? getTimelinePhaseLabel(mostActivePhase) : '—';
+  const disciplineTags = Array.from(disciplines)
+    .map(d => `<span class="discipline-tag ${d.toLowerCase()}">${d}</span>`)
+    .join('') || '<span class="discipline-tag empty">—</span>';
+
   container.innerHTML = `
     <div class="episode-summary-item">
       <span class="episode-summary-icon">📅</span>
-      <span class="episode-summary-text">Inpatient Period: <strong>${admitDate} - ${dischargeDate}</strong></span>
+      <span class="episode-summary-text">Inpatient Period: <strong>${periodText}</strong></span>
     </div>
     <div class="episode-summary-item">
       <span class="episode-summary-icon">👥</span>
       <span class="episode-summary-text">Disciplines Involved:</span>
     </div>
     <div class="discipline-tags">
-      ${Array.from(disciplines).map(d => `<span class="discipline-tag ${d.toLowerCase()}">${d}</span>`).join('')}
+      ${disciplineTags}
     </div>
     <div class="episode-summary-item">
-      <span class="episode-summary-text">Most Active Phase: <strong>${mostActivePhase}</strong></span>
+      <span class="episode-summary-text">Most Active Phase: <strong>${activePhaseText}</strong></span>
     </div>
   `;
 }
@@ -3762,7 +3865,15 @@ function renderAllPatientSummary(container) {
 
   allPatientSummarySelectedDate = null;
 
+  if (!currentPatient || !patientData?.rawText) {
+    selectedDateDisplay.textContent = '—';
+    detailContainer.textContent = 'No summary data yet.';
+    return;
+  }
+
+  const requestedPatient = currentPatient;
   fetchPatientSummaryData(currentPatient).then(data => {
+    if (currentPatient !== requestedPatient) return;
     if (!data.length) {
       selectedDateDisplay.textContent = 'No patient summary data found.';
       detailContainer.textContent = 'The patient summary JSON could not be loaded or is empty.';
@@ -4055,17 +4166,9 @@ function renderClinicalTimeline() {
   }
   
   const events = clinicalEventsData?.events || [];
-  if (events.length === 0) {
-    container.innerHTML = '<p style="color: #888; padding: 20px;">No clinical events to display.</p>';
-    updateClinicalTimelineTitle([]);
-    return;
-  }
-  
   const filteredEvents = applySidebarFiltersToEvents(events);
 
   updateClinicalTimelineTitle(filteredEvents);
-  
-  // Clear container
   container.innerHTML = '';
   
   // Render based on current mode
@@ -4108,10 +4211,9 @@ function renderStorylineTimeline(container, filteredEvents) {
     laneY[lane] = (i + 0.5) * laneHeight;
   });
   
-  const { admit, discharge } = getPatientStayDates();
-  const dayLayout = (admit && discharge) ? buildEqualDayLayout(admit, discharge, chartWidth) : null;
+  const { admit, discharge, dayLayout } = resolveTimelineDayLayout(chartWidth);
   if (!dayLayout) {
-    container.innerHTML = '<p style="color:#888;padding:20px;">Admit/discharge dates are required for the timeline.</p>';
+    container.innerHTML = '<p style="color:#888;padding:20px;">Timeline layout could not be created.</p>';
     return;
   }
 
@@ -4797,10 +4899,9 @@ function renderPatientProgressTimeline(container, filteredEvents) {
   const g = svg.append('g')
     .attr('transform', `translate(${margin.left},${margin.top})`);
 
-  const { admit, discharge } = getPatientStayDates();
-  const dayLayout = (admit && discharge) ? buildEqualDayLayout(admit, discharge, chartWidth) : null;
+  const { admit, discharge, dayLayout } = resolveTimelineDayLayout(chartWidth);
   if (!dayLayout) {
-    container.innerHTML = '<p style="color:#888;padding:20px;">Admit/discharge dates are required for the timeline.</p>';
+    container.innerHTML = '<p style="color:#888;padding:20px;">Timeline layout could not be created.</p>';
     return;
   }
 
@@ -5011,10 +5112,9 @@ function renderPointillismTimeline(container, filteredEvents) {
   const g = svg.append('g')
     .attr('transform', `translate(${margin.left},${margin.top})`);
   
-  const { admit, discharge } = getPatientStayDates();
-  const dayLayout = (admit && discharge) ? buildEqualDayLayout(admit, discharge, chartWidth) : null;
+  const { admit, discharge, dayLayout } = resolveTimelineDayLayout(chartWidth);
   if (!dayLayout) {
-    container.innerHTML = '<p style="color:#888;padding:20px;">Admit/discharge dates are required for the timeline.</p>';
+    container.innerHTML = '<p style="color:#888;padding:20px;">Timeline layout could not be created.</p>';
     return;
   }
 
